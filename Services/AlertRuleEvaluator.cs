@@ -30,6 +30,8 @@ public static class AlertRuleEvaluator
         if (!condition.Success || !TryGetProperty(metric, condition.Groups["field"].Value, out JsonElement left))
             return false;
 
+        if (condition.Groups["field"] == "CpuLoad" || condition.Groups["field"] == "RamLoad") left = left * 100;
+
         string rightText = condition.Groups["value"].Value.Trim();
         string comparison = condition.Groups["operator"].Value;
         bool rightIsField = TryGetProperty(metric, rightText, out JsonElement rightField);
@@ -49,12 +51,12 @@ public static class AlertRuleEvaluator
 
             matches = comparison switch
             {
-                ">" => leftNumber * 100 > rightNumber,
-                ">=" => leftNumber * 100 >= rightNumber,
-                "<" => leftNumber * 100 < rightNumber,
-                "<=" => leftNumber * 100 <= rightNumber,
-                "=" or "==" => leftNumber * 100 == rightNumber,
-                "!=" => leftNumber * 100 != rightNumber,
+                ">" => leftNumber > rightNumber,
+                ">=" => leftNumber >= rightNumber,
+                "<" => leftNumber < rightNumber,
+                "<=" => leftNumber <= rightNumber,
+                "=" or "==" => leftNumber == rightNumber,
+                "!=" => leftNumber != rightNumber,
                 _ => false
             };
             return true;
