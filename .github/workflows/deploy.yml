@@ -21,5 +21,5 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Content-Type: application/json" \
-            "https://api.github.com/repos/YOUR_GITHUB_USERNAME/Telemetry-Auth_API/actions/workflows/deploy-central.yml/dispatches" \
+            "https://api.github.com/repos/vlad595/Telemetry-Auth_API/actions/workflows/deploy-central.yml/dispatches" \
             -d '{"ref":"main","inputs":{"service":"telegram-message-service"}}'
