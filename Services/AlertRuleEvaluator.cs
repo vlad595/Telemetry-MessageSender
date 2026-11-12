@@ -49,12 +49,12 @@ public static class AlertRuleEvaluator
 
             matches = comparison switch
             {
-                ">" => leftNumber > rightNumber,
-                ">=" => leftNumber >= rightNumber,
-                "<" => leftNumber < rightNumber,
-                "<=" => leftNumber <= rightNumber,
-                "=" or "==" => leftNumber == rightNumber,
-                "!=" => leftNumber != rightNumber,
+                ">" => leftNumber * 100 > rightNumber,
+                ">=" => leftNumber * 100 >= rightNumber,
+                "<" => leftNumber * 100 < rightNumber,
+                "<=" => leftNumber * 100 <= rightNumber,
+                "=" or "==" => leftNumber * 100 == rightNumber,
+                "!=" => leftNumber * 100 != rightNumber,
                 _ => false
             };
             return true;
