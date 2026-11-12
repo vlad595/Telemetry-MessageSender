@@ -8,6 +8,9 @@ namespace Telemetry_MessageSender.Services;
 
 public sealed record TelegramRecipient(Guid UserId, string UserName, string ChatId);
 
+public sealed record InstanceTelegramRecipients(string InstanceName, string? WorkspaceName,
+    IReadOnlyList<TelegramRecipient> Recipients);
+
 public sealed record TelegramRules(Guid UserId, string? TelegramChatId, IReadOnlyList<string> Rules);
 
 public sealed class TelegramNotificationService : BackgroundService
@@ -75,33 +78,39 @@ public sealed class TelegramNotificationService : BackgroundService
         }
     }
 
-    public Task SendNotificationAsync(long chatId, string text, CancellationToken cancellationToken = default)
+    public Task SendNotificationAsync(long chatId, string text, CancellationToken cancellationToken = default, bool html = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
-        return _bot.SendMessage(chatId, text, cancellationToken: cancellationToken);
+        return html
+            ? _bot.SendMessage(chatId, text, parseMode: ParseMode.Html, cancellationToken: cancellationToken)
+            : _bot.SendMessage(chatId, text, cancellationToken: cancellationToken);
     }
 
-    public Task SendNotificationAsync(string chatId, string text, CancellationToken cancellationToken = default)
+    public Task SendNotificationAsync(string chatId, string text, CancellationToken cancellationToken = default, bool html = false)
     {
         if (!long.TryParse(chatId, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsedChatId))
         {
             throw new ArgumentException("Telegram chat ID must be a number", nameof(chatId));
         }
 
-        return SendNotificationAsync(parsedChatId, text, cancellationToken);
+        return SendNotificationAsync(parsedChatId, text, cancellationToken, html);
     }
 
-    public async Task<IReadOnlyList<TelegramRecipient>> GetRecipientsAsync(Guid agentId, CancellationToken cancellationToken = default)
+    public async Task<InstanceTelegramRecipients> GetRecipientsAsync(Guid agentId, CancellationToken cancellationToken = default)
     {
         string url = $"{_authApiUrl}/api/user/telegram/agent={agentId:D}";
         using HttpResponseMessage response = await _httpClient.GetAsync(url, cancellationToken);
         response.EnsureSuccessStatusCode();
         InstanceTelegramRecipientsResponse users = await response.Content.ReadFromJsonAsync<InstanceTelegramRecipientsResponse>(cancellationToken)
             ?? throw new InvalidOperationException($"Auth API returned no Telegram recipients for agent {agentId}");
-        return users.Users
+        if (users.InstanceId != agentId)
+            throw new InvalidOperationException($"Auth API returned recipients for the wrong agent {agentId}");
+
+        IReadOnlyList<TelegramRecipient> recipients = users.Users
             .Where(user => !string.IsNullOrWhiteSpace(user.Value.UserChatId))
             .Select(user => new TelegramRecipient(user.Key, user.Value.UserName, user.Value.UserChatId))
             .ToList();
+        return new InstanceTelegramRecipients(users.InstanceName, users.InstanceWorkspace, recipients);
     }
 
     public async Task<TelegramRules?> GetRulesAsync(Guid userId, CancellationToken cancellationToken = default)
