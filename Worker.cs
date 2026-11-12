@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using Telemetry_MessageSender.Services;
@@ -7,10 +8,6 @@ namespace Telemetry_MessageSender;
 
 public class Worker(ILogger<Worker> logger, IConfiguration config, TelegramNotificationService notifications) : BackgroundService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-
-    private sealed record NotificationMessage(Guid AgentId, string Message);
-
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
@@ -50,10 +47,10 @@ public class Worker(ILogger<Worker> logger, IConfiguration config, TelegramNotif
         {
             try
             {
-                NotificationMessage? message;
+                JsonDocument document;
                 try
                 {
-                    message = JsonSerializer.Deserialize<NotificationMessage>(args.Body.Span, JsonOptions);
+                    document = JsonDocument.Parse(args.Body);
                 }
                 catch (JsonException ex)
                 {
@@ -62,41 +59,50 @@ public class Worker(ILogger<Worker> logger, IConfiguration config, TelegramNotif
                     return;
                 }
 
-                if (message is null || message.AgentId == Guid.Empty || string.IsNullOrWhiteSpace(message.Message))
+                using (document)
                 {
-                    logger.LogWarning("Skipping invalid Telegram notification with delivery tag {DeliveryTag}", args.DeliveryTag);
-                    await channel.BasicNackAsync(args.DeliveryTag, false, false, stoppingToken);
-                    return;
-                }
-
-                IReadOnlyList<TelegramRecipient> recipients = await notifications.GetRecipientsAsync(message.AgentId, stoppingToken);
-                if (recipients.Count == 0)
-                {
-                    logger.LogInformation("Agent {AgentId} has no Telegram recipients", message.AgentId);
-                }
-
-                bool deliveryFailed = false;
-                foreach (TelegramRecipient recipient in recipients)
-                {
-                    try
+                    JsonElement metric = document.RootElement;
+                    if (metric.ValueKind != JsonValueKind.Object
+                        || !metric.TryGetProperty("instanceId", out JsonElement id)
+                        || !Guid.TryParse(id.ToString(), out Guid agentId)
+                        || agentId == Guid.Empty)
                     {
-                        await notifications.SendNotificationAsync(recipient.ChatId, message.Message, stoppingToken);
-                        logger.LogInformation("Telegram notification sent to user {UserId} for agent {AgentId}", recipient.UserId, message.AgentId);
+                        logger.LogWarning("Skipping invalid metric notification with delivery tag {DeliveryTag}", args.DeliveryTag);
+                        await channel.BasicNackAsync(args.DeliveryTag, false, false, stoppingToken);
+                        return;
                     }
-                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                    {
-                        throw;
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogError(ex, "Could not send Telegram notification to user {UserId} for agent {AgentId}", recipient.UserId, message.AgentId);
-                        deliveryFailed = true;
-                    }
-                }
 
-                if (deliveryFailed)
-                {
-                    throw new InvalidOperationException($"One or more Telegram notifications failed for agent {message.AgentId}");
+                    IReadOnlyList<TelegramRecipient> recipients = await notifications.GetRecipientsAsync(agentId, stoppingToken);
+                    if (recipients.Count == 0)
+                        logger.LogInformation("Agent {AgentId} has no Telegram recipients", agentId);
+
+                    bool deliveryFailed = false;
+                    string text = FormatNotification(metric, agentId);
+                    foreach (TelegramRecipient recipient in recipients)
+                    {
+                        try
+                        {
+                            TelegramRules? rules = await notifications.GetRulesAsync(recipient.UserId, stoppingToken);
+                            if (rules is null || string.IsNullOrWhiteSpace(rules.TelegramChatId)
+                                || !AlertRuleEvaluator.MatchesAny(metric, rules.Rules))
+                                continue;
+
+                            await notifications.SendNotificationAsync(rules.TelegramChatId, text, stoppingToken);
+                            logger.LogInformation("Telegram notification sent to user {UserId} for agent {AgentId}", recipient.UserId, agentId);
+                        }
+                        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "Could not send Telegram notification to user {UserId} for agent {AgentId}", recipient.UserId, agentId);
+                            deliveryFailed = true;
+                        }
+                    }
+
+                    if (deliveryFailed)
+                        throw new InvalidOperationException($"One or more Telegram notifications failed for agent {agentId}");
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -128,5 +134,17 @@ public class Worker(ILogger<Worker> logger, IConfiguration config, TelegramNotif
         {
             logger.LogInformation("RabbitMQ consumer stopped");
         }
+    }
+
+    private static string FormatNotification(JsonElement metric, Guid agentId)
+    {
+        var text = new StringBuilder($"⚠️ Telemetry: {agentId:D}");
+        foreach (JsonProperty property in metric.EnumerateObject())
+        {
+            if (string.Equals(property.Name, "instanceId", StringComparison.OrdinalIgnoreCase))
+                continue;
+            text.Append('\n').Append(property.Name).Append(": ").Append(property.Value.ToString());
+        }
+        return text.Length <= 4096 ? text.ToString() : text.ToString(0, 4093) + "...";
     }
 }

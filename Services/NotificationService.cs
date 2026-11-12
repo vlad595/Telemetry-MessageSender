@@ -6,7 +6,9 @@ using Telegram.Bot.Types.Enums;
 
 namespace Telemetry_MessageSender.Services;
 
-public sealed record TelegramRecipient(Guid UserId, string ChatId);
+public sealed record TelegramRecipient(Guid UserId, string UserName, string ChatId);
+
+public sealed record TelegramRules(Guid UserId, string? TelegramChatId, IReadOnlyList<string> Rules);
 
 public sealed class TelegramNotificationService : BackgroundService
 {
@@ -94,17 +96,38 @@ public sealed class TelegramNotificationService : BackgroundService
         string url = $"{_authApiUrl}/api/user/telegram/agent={agentId:D}";
         using HttpResponseMessage response = await _httpClient.GetAsync(url, cancellationToken);
         response.EnsureSuccessStatusCode();
-        List<UserTelegramResponse> users = await response.Content.ReadFromJsonAsync<List<UserTelegramResponse>>(cancellationToken)
+        InstanceTelegramRecipientsResponse users = await response.Content.ReadFromJsonAsync<InstanceTelegramRecipientsResponse>(cancellationToken)
             ?? throw new InvalidOperationException($"Auth API returned no Telegram recipients for agent {agentId}");
-        return users
-            .Where(user => !string.IsNullOrWhiteSpace(user.TelegramChatId) && user.TelegramChatId != "null")
-            .Select(user => new TelegramRecipient(user.Id, user.TelegramChatId))
+        return users.Users
+            .Where(user => !string.IsNullOrWhiteSpace(user.Value.UserChatId))
+            .Select(user => new TelegramRecipient(user.Key, user.Value.UserName, user.Value.UserChatId))
             .ToList();
     }
 
-    private sealed record UserTelegramResponse(Guid Id, string TelegramChatId);
+    public async Task<TelegramRules?> GetRulesAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        string url = $"{_authApiUrl}/api/user/telegram/user={userId:D}";
+        using HttpResponseMessage response = await _httpClient.GetAsync(url, cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return null;
 
-    private sealed record TelegramConnectionResponse(Guid Id, string UserName);
+        response.EnsureSuccessStatusCode();
+        UserTelegramRulesResponse rules = await response.Content.ReadFromJsonAsync<UserTelegramRulesResponse>(cancellationToken)
+            ?? throw new InvalidOperationException($"Auth API returned no rules for user {userId}");
+        if (rules.UserId != userId)
+            throw new InvalidOperationException($"Auth API returned rules for the wrong user {userId}");
+
+        return new TelegramRules(rules.UserId, rules.TelegramChatId, rules.Rules ?? []);
+    }
+
+    private sealed record InstanceTelegramRecipientsResponse(Guid InstanceId, string InstanceName,
+        string? InstanceWorkspace, Dictionary<Guid, TelegramRecipientResponse> Users);
+
+    private sealed record TelegramRecipientResponse(string UserName, string UserChatId);
+
+    private sealed record UserTelegramRulesResponse(Guid UserId, string? TelegramChatId, List<string>? Rules);
+
+    private sealed record TelegramConnectionResponse(Guid UserId);
 
     private async Task HandleUpdateAsync(Update update, CancellationToken cancellationToken)
     {
@@ -140,12 +163,12 @@ public sealed class TelegramNotificationService : BackgroundService
         if (response.IsSuccessStatusCode)
         {
             TelegramConnectionResponse? connectedUser = await response.Content.ReadFromJsonAsync<TelegramConnectionResponse>(cancellationToken);
-            if (connectedUser is null || connectedUser.Id == Guid.Empty || string.IsNullOrWhiteSpace(connectedUser.UserName))
+            if (connectedUser is null || connectedUser.UserId == Guid.Empty)
             {
                 throw new InvalidOperationException("Auth API returned an invalid Telegram connection response");
             }
 
-            await SendNotificationAsync(message.Chat.Id, $"Telegram підключено до акаунта Telemetry, {connectedUser.UserName}.", cancellationToken);
+            await SendNotificationAsync(message.Chat.Id, "Telegram підключено до акаунта Telemetry.", cancellationToken);
         }
         else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
