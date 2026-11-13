@@ -8,7 +8,7 @@ using Telemetry_MessageSender.Services;
 
 namespace Telemetry_MessageSender;
 
-public class Worker(ILogger<Worker> logger, IConfiguration config, TelegramNotificationService notifications) : BackgroundService
+public class Worker(ILogger<Worker> logger, IConfiguration config, TelegramNotificationService notifications, CooldownService cooldownService) : BackgroundService
 {
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
@@ -90,9 +90,14 @@ public class Worker(ILogger<Worker> logger, IConfiguration config, TelegramNotif
                             IReadOnlyList<MatchedAlertRule> matches = AlertRuleEvaluator.GetMatches(metric, rules.Rules);
                             if (matches.Count == 0)
                                 continue;
+                            
+                            if (!cooldownService.CanSend(agentId)) continue;
 
                             string text = FormatNotification(metric, instance, matches);
                             await notifications.SendNotificationAsync(rules.TelegramChatId, text, stoppingToken, html: true);
+
+                            cooldownService.MarkSent(agentId);
+
                             logger.LogInformation("Telegram notification sent to user {UserId} for agent {AgentId}", recipient.UserId, agentId);
                         }
                         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

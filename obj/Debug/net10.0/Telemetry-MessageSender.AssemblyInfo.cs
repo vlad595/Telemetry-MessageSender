@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Telemetry-MessageSender")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fa9e4ac8560ebdc5a3256ab4216565c7d24caa76")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5d761005acbbd66397164a0f7daf585e78d12980")]
 [assembly: System.Reflection.AssemblyProductAttribute("Telemetry-MessageSender")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Telemetry-MessageSender")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
